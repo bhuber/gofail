@@ -41,6 +41,7 @@ func callFuncByName(name string, args []string) (interface{}, error) {
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
+	log.Printf("received request: %v", r)
 	pathParts := strings.Split(r.URL.Path, "/")
 	if len(pathParts) < 3 {
 		http.Error(w, "invalid URL path", http.StatusBadRequest)
