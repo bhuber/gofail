@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"os"
@@ -111,7 +110,7 @@ func sendRequest(port int, method string, endpoint string, data []byte) (string,
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", 0, err
 	}
@@ -135,7 +134,8 @@ func getOpenPorts(count int) ([]int, error) {
 }
 
 func TestAll(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	timeout := 10 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	ports, err := getOpenPorts(2)
@@ -146,30 +146,30 @@ func TestAll(t *testing.T) {
 
 	// Spawn server.go in a goroutine
 	go func() {
-		stdoutReader, stdoutWriter := io.Pipe()
-		stderrReader, stderrWriter := io.Pipe()
+		defer func() {
+			println("Server goroutine exited")
+		}()
 
-		defer stdoutWriter.Close()
-		defer stderrWriter.Close()
-
-		pipeToStdout := func(reader *io.PipeReader) {
-			scanner := bufio.NewScanner(stdoutReader)
+		pipeToStdout := func(reader io.ReadCloser) {
+			scanner := bufio.NewScanner(reader)
 			for scanner.Scan() {
-				fmt.Println(scanner.Text())
+				fmt.Println("[Test Server] " + scanner.Text())
 			}
 		}
 
+		cmd := exec.CommandContext(ctx, "go", "run", "main.go", fmt.Sprintf("%d", pas.serverPort))
+
+		stdoutReader, err := cmd.StdoutPipe()
+		stderrReader, err := cmd.StderrPipe()
 		go pipeToStdout(stdoutReader)
 		go pipeToStdout(stderrReader)
 
-		cmd := exec.CommandContext(ctx, "go", "run", "main.go", fmt.Sprintf("%d", pas.serverPort))
-		cmd.Stdout = stdoutWriter
-		cmd.Stderr = stderrWriter
-		//cmd.WaitDelay = 1 * time.Second
+		cmd.WaitDelay = timeout
 		cmd.Env = append(os.Environ(), fmt.Sprintf("GOFAIL_HTTP=:%d", pas.gofailPort))
 		t.Logf("Starting server: GOFAIL_HTTP=%d %v", pas.gofailPort, cmd)
 
-		err := cmd.Start()
+		err = cmd.Start()
+		// Technically a race condition, but don't test on hardware that can't spawn a simple server in 1 second
 		time.Sleep(1 * time.Second)
 		waitForServer <- struct{}{}
 
@@ -180,15 +180,16 @@ func TestAll(t *testing.T) {
 
 		t.Logf("Waiting for server to exit, pid %d", cmd.Process.Pid)
 		err = cmd.Wait()
-		t.Logf("Server exited: %v", err)
-		assert.NoError(t, err)
 
-		stdoutWriter.Close()
-		stderrWriter.Close()
+		// We always stop the server by cancelling the context, so this should always be sigkill
+		t.Logf("Server exited (sigkill is expected): %v", err)
+		assert.Error(t, err)
+
 		waitForServer <- struct{}{}
 	}()
 
 	defer func() {
+		time.Sleep(1 * time.Second)
 		cancel()
 		<-waitForServer
 	}()
