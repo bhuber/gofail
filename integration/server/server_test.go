@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"io"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -144,13 +146,31 @@ func TestAll(t *testing.T) {
 
 	// Spawn server.go in a goroutine
 	go func() {
+		stdoutReader, stdoutWriter := io.Pipe()
+		stderrReader, stderrWriter := io.Pipe()
+
+		defer stdoutWriter.Close()
+		defer stderrWriter.Close()
+
+		pipeToStdout := func(reader *io.PipeReader) {
+			scanner := bufio.NewScanner(stdoutReader)
+			for scanner.Scan() {
+				fmt.Println(scanner.Text())
+			}
+		}
+
+		go pipeToStdout(stdoutReader)
+		go pipeToStdout(stderrReader)
+
 		cmd := exec.CommandContext(ctx, "go", "run", "main.go", fmt.Sprintf("%d", pas.serverPort))
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		cmd.Env = append(os.Environ(), fmt.Sprintf("GOFAIL_HTTP=%d", pas.gofailPort))
+		cmd.Stdout = stdoutWriter
+		cmd.Stderr = stderrWriter
+		//cmd.WaitDelay = 1 * time.Second
+		cmd.Env = append(os.Environ(), fmt.Sprintf("GOFAIL_HTTP=:%d", pas.gofailPort))
 		t.Logf("Starting server: GOFAIL_HTTP=%d %v", pas.gofailPort, cmd)
 
 		err := cmd.Start()
+		time.Sleep(1 * time.Second)
 		waitForServer <- struct{}{}
 
 		if err != nil {
@@ -162,8 +182,16 @@ func TestAll(t *testing.T) {
 		err = cmd.Wait()
 		t.Logf("Server exited: %v", err)
 		assert.NoError(t, err)
+
+		stdoutWriter.Close()
+		stderrWriter.Close()
+		waitForServer <- struct{}{}
 	}()
 
+	defer func() {
+		cancel()
+		<-waitForServer
+	}()
 	<-waitForServer
 
 	tests := []struct {
@@ -181,7 +209,7 @@ func TestAll(t *testing.T) {
 						args:     nil,
 						expected: response{
 							statusCode: 200,
-							body:       "Hello, World!",
+							body:       "ExampleLabels=\nExampleOneLine=\nExampleString=\n",
 						},
 					},
 				},
