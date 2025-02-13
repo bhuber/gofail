@@ -267,15 +267,14 @@ func rgTestServerSuccess(endpoint string, expected string, args ...string) testR
 //   - When debugging in an IDE, make sure to run `make gofail-enable` in the root directory
 //     to enable the gofail failpoint control API.
 //   - Make sure to run all tests every time, as later tests depend on earlier ones.
-//     Fortunately, they run very quickly.
+//     Fortunately, they run very quickly.  If necessary, you can reset state by sending
+//     deactivate requests for the relevant failpoints.
 //   - You can spawn the main.go server manually and attach a debugger to it, then hack
 //     getOpenPorts() to return the relevant ports.  This will allow you to effectively
-//     debug client-server interactions.  You may need to increase the timeout variable
+//     debug client-server interactions. You may need to increase the timeout variable
 //     below.
-//
-// Keep in mind server state is preserved between test cases, which means
-// earlier tests may affect later ones.  You can mostly reset state by sending
-// a failpoints request with empty expressions.
+//     That said, stdout/err messages from the server process are emitted in the test
+//     output, and are usually sufficient for debugging.
 func TestAll(t *testing.T) {
 	timeout := 10 * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -303,7 +302,9 @@ func TestAll(t *testing.T) {
 		cmd := exec.CommandContext(ctx, "go", "run", "main.go", fmt.Sprintf("%d", pas.serverPort))
 
 		stdoutReader, err := cmd.StdoutPipe()
+		require.NoError(t, err)
 		stderrReader, err := cmd.StderrPipe()
+		require.NoError(t, err)
 		go pipeToStdout(stdoutReader)
 		go pipeToStdout(stderrReader)
 
@@ -312,18 +313,15 @@ func TestAll(t *testing.T) {
 		t.Logf("Starting server: GOFAIL_HTTP=:%d %v", pas.gofailPort, cmd)
 
 		err = cmd.Start()
-
+		require.NoError(t, err)
 		t.Logf("Waiting for server to be available, pid %d", cmd.Process.Pid)
 		assert.Eventuallyf(t, func() bool {
 			_, statusCode, _ := sendRequest(t, pas.serverPort, http.MethodGet, "call/ExampleFunc", []byte{})
 			return statusCode == 200
 		}, timeout, 100*time.Millisecond, "Server did not become available in time")
-		waitForServer <- struct{}{}
 
-		if err != nil {
-			t.Errorf("Failed to run server: %v", err)
-			return
-		}
+		// signal server start
+		waitForServer <- struct{}{}
 
 		t.Logf("Waiting for server to exit, pid %d", cmd.Process.Pid)
 		err = cmd.Wait()
@@ -332,6 +330,7 @@ func TestAll(t *testing.T) {
 		t.Logf("Server exited (sigkill is expected) with error: %v, context cancellation reason %v", err, ctx.Err())
 		assert.Error(t, err)
 
+		// signal server exit
 		waitForServer <- struct{}{}
 	}()
 
@@ -363,7 +362,7 @@ func TestAll(t *testing.T) {
 				&gofailTestRequest{
 					requestType: "list",
 					request: request{
-						endpoint: "ExampleStrings",
+						endpoint: "ExampleString",
 						expected: response{
 							statusCode: 404,
 							body:       "failed to GET: failpoint: failpoint is disabled\n\n",
