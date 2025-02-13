@@ -24,8 +24,11 @@ func callFuncByName(name string, args []string) (interface{}, error) {
 	}
 
 	fnValue := reflect.ValueOf(fn)
-	if len(args) != fnValue.Type().NumIn() {
-		return nil, fmt.Errorf("wrong number of arguments for function %s", name)
+	expectedNArgs := fnValue.Type().NumIn()
+	gotNArgs := len(args)
+	if expectedNArgs != gotNArgs {
+		return nil, fmt.Errorf("wrong number of arguments for function %s. "+
+			"Expected %d, got %d", name, expectedNArgs, gotNArgs)
 	}
 
 	in := make([]reflect.Value, len(args))
@@ -48,7 +51,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	funcName := pathParts[2]
-	args := r.URL.Query()["arg"]
+	args := r.URL.Query()["args"]
 
 	result, err := callFuncByName(funcName, args)
 	if err != nil {
