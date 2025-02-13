@@ -134,6 +134,7 @@ func (g *gofailTestRequest) AssertResponse(t *testing.T) {
 	body, statusCode, err := sendRequest(t, g.port, methodType, endpoint, []byte(payload))
 	assert.NoError(t, err)
 	assert.Equal(t, g.expected.statusCode, statusCode)
+
 	if g.requestType != "listall" {
 		assert.Equal(t, g.expected.body, body)
 	} else {
@@ -156,7 +157,9 @@ func (g *gofailTestRequest) AssertResponse(t *testing.T) {
 		expected := stringToMap(g.expected.body, "\n", "=")
 		actual := stringToMap(body, "\n", "=")
 		if !reflect.DeepEqual(expected, actual) {
-			t.Errorf("listall response did not match:\n\tExpected:\t%#v\n\tActual:\t\t%#v", expected, actual)
+			t.Errorf(
+				"listall response did not match:\n\tExpected:\t%#v\n\tActual:\t\t%#v",
+				expected, actual)
 		}
 	}
 }
@@ -201,6 +204,46 @@ func getOpenPorts(count int) ([]int, error) {
 		ports = append(ports, addr.Port)
 	}
 	return ports, nil
+}
+
+// request generation helpers
+
+func rgListAllSuccess(expected string) testRequest {
+	return &gofailTestRequest{
+		requestType: "listall",
+		request: request{
+			expected: response{
+				statusCode: 200,
+				body:       expected,
+			},
+		},
+	}
+}
+
+func rgCountSuccess(endpoint string, expected int) testRequest {
+	return &gofailTestRequest{
+		requestType: "count",
+		request: request{
+			endpoint: endpoint,
+			expected: response{
+				statusCode: 200,
+				body:       fmt.Sprintf("%d", expected),
+			},
+		},
+	}
+}
+
+func rgTestServerSuccess(endpoint string, expected string, args ...string) testRequest {
+	return &serverTestRequest{
+		request: request{
+			endpoint: endpoint,
+			args:     args,
+			expected: response{
+				statusCode: 200,
+				body:       "\"" + expected + "\"",
+			},
+		},
+	}
 }
 
 func TestAll(t *testing.T) {
@@ -279,15 +322,7 @@ func TestAll(t *testing.T) {
 		{
 			name: "Empty listall",
 			requests: []testRequest{
-				&gofailTestRequest{
-					requestType: "listall",
-					request: request{
-						expected: response{
-							statusCode: 200,
-							body:       "ExampleLabels=\nExampleOneLine=\nExampleString=\n",
-						},
-					},
-				},
+				rgListAllSuccess("ExampleLabels=\nExampleOneLine=\nExampleString=\n"),
 			},
 		},
 		{
@@ -364,16 +399,7 @@ func TestAll(t *testing.T) {
 						},
 					},
 				},
-				&gofailTestRequest{
-					requestType: "count",
-					request: request{
-						endpoint: "ExampleString",
-						expected: response{
-							statusCode: 200,
-							body:       "0",
-						},
-					},
-				},
+				rgCountSuccess("ExampleString", 0),
 			},
 		},
 		{
@@ -394,39 +420,14 @@ func TestAll(t *testing.T) {
 		{
 			name: "listall after put",
 			requests: []testRequest{
-				&gofailTestRequest{
-					requestType: "listall",
-					request: request{
-						expected: response{
-							statusCode: 200,
-							body:       "ExampleLabels=\nExampleOneLine=\nExampleString=return(\"fail string\")\n",
-						},
-					},
-				},
+				rgListAllSuccess("ExampleLabels=\nExampleOneLine=\nExampleString=return(\"fail string\")\n"),
 			},
 		},
 		{
 			name: "count increments to 1",
 			requests: []testRequest{
-				&serverTestRequest{
-					request: request{
-						endpoint: "ExampleFunc",
-						expected: response{
-							statusCode: 200,
-							body:       "\"fail string\"",
-						},
-					},
-				},
-				&gofailTestRequest{
-					requestType: "count",
-					request: request{
-						endpoint: "ExampleString",
-						expected: response{
-							statusCode: 200,
-							body:       "1",
-						},
-					},
-				},
+				rgTestServerSuccess("ExampleFunc", "fail string"),
+				rgCountSuccess("ExampleString", 1),
 			},
 		},
 		{
@@ -443,35 +444,9 @@ func TestAll(t *testing.T) {
 						},
 					},
 				},
-				&gofailTestRequest{
-					requestType: "count",
-					request: request{
-						endpoint: "ExampleString",
-						expected: response{
-							statusCode: 200,
-							body:       "0",
-						},
-					},
-				},
-				&serverTestRequest{
-					request: request{
-						endpoint: "ExampleFunc",
-						expected: response{
-							statusCode: 200,
-							body:       "\"new fail string\"",
-						},
-					},
-				},
-				&gofailTestRequest{
-					requestType: "count",
-					request: request{
-						endpoint: "ExampleString",
-						expected: response{
-							statusCode: 200,
-							body:       "1",
-						},
-					},
-				},
+				rgCountSuccess("ExampleString", 0),
+				rgTestServerSuccess("ExampleFunc", "new fail string"),
+				rgCountSuccess("ExampleString", 1),
 			},
 		},
 		{
@@ -487,15 +462,7 @@ func TestAll(t *testing.T) {
 						},
 					},
 				},
-				&gofailTestRequest{
-					requestType: "listall",
-					request: request{
-						expected: response{
-							statusCode: 200,
-							body:       "ExampleLabels=\nExampleOneLine=\nExampleString=\n",
-						},
-					},
-				},
+				rgListAllSuccess("ExampleLabels=\nExampleOneLine=\nExampleString=\n"),
 				&gofailTestRequest{
 					requestType: "list",
 					request: request{
@@ -516,15 +483,7 @@ func TestAll(t *testing.T) {
 						},
 					},
 				},
-				&serverTestRequest{
-					request: request{
-						endpoint: "ExampleFunc",
-						expected: response{
-							statusCode: 200,
-							body:       "\"example\"",
-						},
-					},
-				},
+				rgTestServerSuccess("ExampleFunc", "example"),
 			},
 		},
 		{
@@ -554,13 +513,16 @@ func TestAll(t *testing.T) {
 			},
 		},
 		{
-			name: "failpoints works as expected",
+			name: "failpoints happy path",
 			requests: []testRequest{
+				rgTestServerSuccess("ExampleFunc", "new fail string"),
+				rgTestServerSuccess("ExampleOneLineFunc", "abc"),
+				rgTestServerSuccess("ExampleLabelsFunc", "ijjjjjijjjjjijjjjjijjjjjijjjjj"),
 				&gofailTestRequest{
 					requestType: "failpoints",
 					request: request{
 						args: []string{
-							"ExampleString=return(\"fail string1\")->return(\"fail string2\")",
+							"ExampleString=1*return(\"fail string1\")->return(\"fail string2\")",
 							"ExampleOneLine=return(\"def\")",
 							"ExampleLabels=return"},
 						expected: response{
@@ -569,28 +531,125 @@ func TestAll(t *testing.T) {
 						},
 					},
 				},
+				rgListAllSuccess(strings.Join([]string{
+					"ExampleString=1*return(\"fail string1\")->return(\"fail string2\")",
+					"ExampleOneLine=return(\"def\")",
+					"ExampleLabels=return"}, "\n") + "\n"),
+				rgCountSuccess("ExampleString", 0),
+				rgTestServerSuccess("ExampleFunc", "fail string1"),
+				rgTestServerSuccess("ExampleFunc", "fail string2"),
+				rgTestServerSuccess("ExampleOneLineFunc", "abc"),
+				rgTestServerSuccess("ExampleLabelsFunc", "ijijijijij"),
+				rgCountSuccess("ExampleString", 2),
+				rgCountSuccess("ExampleOneLine", 1),
+				rgCountSuccess("ExampleLabels", 5),
+			},
+		},
+		{
+			name: "failpoints works with subset of failpoints",
+			requests: []testRequest{
 				&gofailTestRequest{
-					requestType: "listall",
+					requestType: "failpoints",
 					request: request{
+						args: []string{"ExampleOneLine=return(\"ghi\")"},
 						expected: response{
-							statusCode: 200,
-							body: strings.Join([]string{
-								"ExampleString=return(\"fail string1\")->return(\"fail string2\")",
-								"ExampleOneLine=return(\"def\")",
-								"ExampleLabels=return"}, "\n") + "\n",
+							statusCode: 204,
+							body:       "",
 						},
 					},
 				},
+				rgListAllSuccess(strings.Join([]string{
+					"ExampleString=1*return(\"fail string1\")->return(\"fail string2\")",
+					"ExampleOneLine=return(\"ghi\")",
+					"ExampleLabels=return"}, "\n") + "\n"),
+				rgCountSuccess("ExampleString", 2),
+				rgCountSuccess("ExampleOneLine", 0),
+				rgCountSuccess("ExampleLabels", 5),
+			},
+		},
+		{
+			name: "failpoints ignores invalid failpoints, and processes valid ones",
+			requests: []testRequest{
 				&gofailTestRequest{
-					requestType: "count",
+					requestType: "failpoints",
 					request: request{
-						endpoint: "ExampleString",
+						args: []string{
+							"ExampleOneLine=return(\"jkl\")",
+							"InvalidFailpoint=return",
+						},
 						expected: response{
-							statusCode: 200,
-							body:       "0",
+							statusCode: 400,
+							body:       "fail to set failpoint: failpoint: failpoint does not exist\n",
 						},
 					},
 				},
+				rgListAllSuccess(strings.Join([]string{
+					"ExampleString=1*return(\"fail string1\")->return(\"fail string2\")",
+					"ExampleOneLine=return(\"jkl\")",
+					"ExampleLabels=return"}, "\n") + "\n"),
+				rgCountSuccess("ExampleString", 2),
+				rgCountSuccess("ExampleOneLine", 0),
+				rgCountSuccess("ExampleLabels", 5),
+			},
+		},
+		{
+			name: "failpoints can reset failpoints",
+			requests: []testRequest{
+				&gofailTestRequest{
+					requestType: "failpoints",
+					request: request{
+						args: []string{
+							"ExampleString=off",
+							"ExampleOneLine=off",
+							"ExampleLabels=off",
+						},
+						expected: response{
+							statusCode: 204,
+							body:       "",
+						},
+					},
+				},
+				rgListAllSuccess(strings.Join([]string{
+					"ExampleString=off",
+					"ExampleOneLine=off",
+					"ExampleLabels=off",
+				}, "\n") + "\n"),
+				rgTestServerSuccess("ExampleFunc", "example"),
+				rgTestServerSuccess("ExampleOneLineFunc", "abc"),
+				rgTestServerSuccess("ExampleLabelsFunc", "ijjjjjijjjjjijjjjjijjjjjijjjjj"),
+				rgCountSuccess("ExampleString", 1),
+				rgCountSuccess("ExampleOneLine", 1),
+				rgCountSuccess("ExampleLabels", 25),
+			},
+		},
+		{
+			name: "failpoints can't delete failpoints :(",
+			requests: []testRequest{
+				&gofailTestRequest{
+					requestType: "failpoints",
+					request: request{
+						args: []string{
+							"ExampleString=",
+							"ExampleOneLine=",
+							"ExampleLabels=",
+						},
+						expected: response{
+							statusCode: 400,
+							body:       "fail to set failpoint: failpoint: could not parse terms\n",
+						},
+					},
+				},
+				rgListAllSuccess(strings.Join([]string{
+					"ExampleString=off",
+					"ExampleOneLine=off",
+					"ExampleLabels=off",
+				}, "\n") + "\n"),
+				rgTestServerSuccess("ExampleFunc", "example"),
+				rgTestServerSuccess("ExampleOneLineFunc", "abc"),
+				rgTestServerSuccess("ExampleLabelsFunc", "ijjjjjijjjjjijjjjjijjjjjijjjjj"),
+				rgCountSuccess("ExampleString", 2),
+				rgCountSuccess("ExampleOneLine", 2),
+				rgCountSuccess("ExampleLabels", 50),
 			},
 		},
 	}
