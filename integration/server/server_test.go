@@ -27,6 +27,23 @@ type portAssignments struct {
 	serverPort int
 }
 
+func getOpenPorts(count int) ([]int, error) {
+	ports := make([]int, 0, count)
+	for i := 0; i < count; i++ {
+		listener, err := net.Listen("tcp", "localhost:0")
+		if err != nil {
+			return nil, err
+		}
+
+		// We want to keep listeners open until loop finishes so we don't accidentally reuse a port.
+		defer listener.Close()
+
+		addr := listener.Addr().(*net.TCPAddr)
+		ports = append(ports, addr.Port)
+	}
+	return ports, nil
+}
+
 type testRequest interface {
 	// AssertResponse is the heart of the test logic. It sends the request to the server,
 	// then checks the response matches expectations.
@@ -54,6 +71,9 @@ type serverTestRequest struct {
 }
 
 func (s *serverTestRequest) AssertResponse(t *testing.T) {
+	t.Helper()
+
+	// See main.go for endpoint definitions
 	endpoint := "call/" + s.endpoint
 	if len(s.args) > 0 {
 		// http server interprets "?args=" as having a single argument of value ""
@@ -75,7 +95,7 @@ type gofailTestRequest struct {
 	request
 
 	// requestType is the kind of request we're making to the failpoint control API.
-	// These correspond to the operations described in the "HTTP endpoint" of the README.
+	// These correspond to the operations described in the "HTTP endpoint" section of the README.
 	//
 	// Valid values are put, failpoints, listall, list, count, deactivate
 	// * put: sets the value of a failpoint, enabling it
@@ -88,11 +108,13 @@ type gofailTestRequest struct {
 }
 
 func (g *gofailTestRequest) AssertResponse(t *testing.T) {
+	t.Helper()
 	require.NotEqual(t, g.port, 0, "port is not set")
 
 	endpoint := g.endpoint
 	payload := ""
 	var methodType string
+
 	switch g.requestType {
 	case "put":
 		methodType = http.MethodPut
@@ -168,14 +190,17 @@ func (g *gofailTestRequest) SetupPortAssignments(ports portAssignments) {
 	g.port = ports.gofailPort
 }
 
+// sendRequest is the core helper method
 func sendRequest(t *testing.T, port int, method string, endpoint string, data []byte) (string, int, error) {
+	t.Helper()
+
 	url := fmt.Sprintf("http://localhost:%d/%s", port, endpoint)
 	req, err := http.NewRequest(method, url, bytes.NewBuffer(data))
 	if err != nil {
 		return "", 0, err
 	}
-	t.Logf("Sending request: %s %s %s", method, url, data)
 
+	t.Logf("Sending request: %s %s %s", method, url, data)
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -189,21 +214,6 @@ func sendRequest(t *testing.T, port int, method string, endpoint string, data []
 	}
 
 	return string(body), resp.StatusCode, nil
-}
-
-func getOpenPorts(count int) ([]int, error) {
-	ports := make([]int, 0, count)
-	for i := 0; i < count; i++ {
-		listener, err := net.Listen("tcp", "localhost:0")
-		if err != nil {
-			return nil, err
-		}
-		defer listener.Close()
-
-		addr := listener.Addr().(*net.TCPAddr)
-		ports = append(ports, addr.Port)
-	}
-	return ports, nil
 }
 
 // request generation helpers
@@ -246,6 +256,26 @@ func rgTestServerSuccess(endpoint string, expected string, args ...string) testR
 	}
 }
 
+// TestAll is a comprehensive test suite for the server and gofail control APIs.
+// Each test consists of a series of requests and expected responses to send to either API.
+// The tests share a single server process which preserves state between tests,
+// so they must be run in order.  We could potentially change this to spawn separate
+// server instances per test, which would isolate the test cases, at the cost of making
+// some individual cases more complex.
+//
+// Some notes for maintainers:
+//   - When debugging in an IDE, make sure to run `make gofail-enable` in the root directory
+//     to enable the gofail failpoint control API.
+//   - Make sure to run all tests every time, as later tests depend on earlier ones.
+//     Fortunately, they run very quickly.
+//   - You can spawn the main.go server manually and attach a debugger to it, then hack
+//     getOpenPorts() to return the relevant ports.  This will allow you to effectively
+//     debug client-server interactions.  You may need to increase the timeout variable
+//     below.
+//
+// Keep in mind server state is preserved between test cases, which means
+// earlier tests may affect later ones.  You can mostly reset state by sending
+// a failpoints request with empty expressions.
 func TestAll(t *testing.T) {
 	timeout := 10 * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -306,15 +336,17 @@ func TestAll(t *testing.T) {
 	}()
 
 	defer func() {
+		// Give it some time to drain IO pipes
 		time.Sleep(1 * time.Second)
 		cancel()
+
+		// Wait for the server to exit
 		<-waitForServer
 	}()
+
+	// Wait for server to start and be ready
 	<-waitForServer
 
-	// Keep in mind server state is preserved between test cases, which means
-	// earlier tests may affect later ones.  You can mostly reset state by sending
-	// a failpoints request with empty expressions.
 	tests := []struct {
 		name     string
 		requests []testRequest
@@ -331,7 +363,7 @@ func TestAll(t *testing.T) {
 				&gofailTestRequest{
 					requestType: "list",
 					request: request{
-						endpoint: "ExampleString",
+						endpoint: "ExampleStrings",
 						expected: response{
 							statusCode: 404,
 							body:       "failed to GET: failpoint: failpoint is disabled\n\n",
