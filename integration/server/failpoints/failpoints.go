@@ -13,8 +13,8 @@ func ExampleOneLineFunc() string {
 
 func ExampleLabelsFunc() string {
 	i := 0
-	// gofail: myLabel:
 	s := ""
+	// gofail: myLabel:
 	for i < 5 {
 		s = s + "i"
 		i++
