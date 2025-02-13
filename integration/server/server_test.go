@@ -80,7 +80,11 @@ func (s *serverTestRequest) AssertResponse(t *testing.T) {
 		endpoint += "?args=" + strings.Join(s.args, ",")
 	}
 
-	body, statusCode, err := sendRequest(t, s.port, http.MethodGet, endpoint, []byte{})
+	methodType := http.MethodGet
+	if s.methodType != "" {
+		methodType = s.methodType
+	}
+	body, statusCode, err := sendRequest(t, s.port, methodType, endpoint, []byte{})
 	assert.NoError(t, err)
 	assert.Equal(t, s.expected.statusCode, statusCode)
 	assert.Equal(t, s.expected.body, body)
